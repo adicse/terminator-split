@@ -61,6 +61,7 @@ class TerminatorSplit(object):
         args, unknown_args = parser.parse_known_args(namespace=namespace)
         if args.grid is not None:
             args.command = args.shell
+            args.grid = args.grid.lower()
         elif len(args.hostname) == 1 and args.hostname[0].isdigit():
             args.command = args.shell
             args.hostname = range(int(args.hostname[0]))
@@ -87,10 +88,14 @@ class TerminatorSplit(object):
         parent = self._next_child()
         self._layout = {parent: {'parent': '', 'type': 'Window'}}
         if self._args.grid:
-            self._args.grid = re.split( ',|x|X|-|\.', self._args.grid ) 
-            r,c = map( int, self._args.grid ) 
-            logging.debug('rows: {}  cols: {}'.format(r, c ) )
-            self._split_layout_grid(parent, rows = r, cols = c)
+            if 'x' in self._args.grid:
+                self._args.grid = self._args.grid.split('x')
+                r,c = map( int, self._args.grid ) 
+                logging.debug('rows: {}  cols: {}'.format(r, c ) )
+                self._split_layout_grid(parent, r, c)
+            elif ',' in self._args.grid:
+                self._args.grid = list( map( int, self._args.grid.split(',') ) )
+                self._split_layout_cstmGrid(parent, self._args.grid)
         else:
             self._split_layout(parent, self._args.hostname)
         config['layouts']['default'] = self._layout
@@ -107,6 +112,17 @@ class TerminatorSplit(object):
     def _split_indx(self, intVal ):
         return (intVal + 1) // 2
 
+    
+    def _split_layout_cstmGrid(self, parent, colsInRows ):
+        if len(colsInRows) == 1 :
+            self.fnMakeCols(parent, colsInRows[0] )
+            return
+
+        newParent = self._split_vertical( parent )
+        rowSplits = self._split_indx( len( colsInRows ) ) 
+        
+        self._split_layout_cstmGrid( newParent, colsInRows[:rowSplits] )
+        self._split_layout_cstmGrid( newParent, colsInRows[rowSplits: ] )
     
     def _split_layout_grid(self, parent, rows, cols):
         if rows == 1 :
