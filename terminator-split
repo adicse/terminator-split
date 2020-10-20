@@ -1,7 +1,6 @@
 #!/usr/bin/python
 
 """terminator-split
-
 Wrapper script for splitting Terminator terminal emulator
 https://github.com/AlekseyChudov/terminator-split
 """
@@ -11,6 +10,8 @@ import logging
 import os
 import resource
 import tempfile
+import re
+import json
 
 import configobj
 
@@ -39,12 +40,11 @@ class TerminatorSplit(object):
     def _parse_args(self):
         usage = """
         terminator-split [-h] [-d]
-                        [-e COMMAND] [-g CONFIG] [-t TERMINATOR]
+                        [-e COMMAND] [-c CONFIG] [-t TERMINATOR]
                         [TERMINATOR_OPTIONS]
                         hostname [hostname ...]
-
         terminator-split [-h] [-d]
-                        [-g CONFIG] [-t TERMINATOR] [-s SHELL]
+                        [-c CONFIG] [-t TERMINATOR] [-s SHELL]
                         [TERMINATOR_OPTIONS]
                         number
         """
@@ -52,13 +52,16 @@ class TerminatorSplit(object):
         parser.add_argument('-d', '--debug', action='store_const', dest='level',
                             const='DEBUG', default='INFO', help='show debug messages at execution time')
         parser.add_argument('-e', '--command')
-        parser.add_argument('-g', '--config', help='Use this terminator config file')
+        parser.add_argument('-c', '--config', help='Use this terminator config file')
+        parser.add_argument('-g', '--grid',  help='Create NxM grid')
         parser.add_argument('-s', '--shell', help='Specify the shell to be loaded')
         parser.add_argument('-t', '--terminator')
-        parser.add_argument('hostname', nargs='+')
+        parser.add_argument('-H', '--hostname', nargs='+', default='0')
         namespace = argparse.Namespace(**self.DEFAULT)
         args, unknown_args = parser.parse_known_args(namespace=namespace)
-        if len(args.hostname) == 1 and args.hostname[0].isdigit():
+        if args.grid is not None:
+            args.command = args.shell
+        elif len(args.hostname) == 1 and args.hostname[0].isdigit():
             args.command = args.shell
             args.hostname = range(int(args.hostname[0]))
         return args, unknown_args
@@ -83,7 +86,13 @@ class TerminatorSplit(object):
     def _update_layout(self, config):
         parent = self._next_child()
         self._layout = {parent: {'parent': '', 'type': 'Window'}}
-        self._split_layout(parent, self._args.hostname)
+        if self._args.grid:
+            self._args.grid = re.split( ',|x|X|-|\.', self._args.grid ) 
+            r,c = map( int, self._args.grid ) 
+            logging.debug('rows: {}  cols: {}'.format(r, c ) )
+            self._split_layout_grid(parent, rows = r, cols = c)
+        else:
+            self._split_layout(parent, self._args.hostname)
         config['layouts']['default'] = self._layout
 
     def _next_child(self):
@@ -94,13 +103,42 @@ class TerminatorSplit(object):
     @staticmethod
     def _split_index(iterable):
         return (len(iterable) + 1) // 2
+    
+    def _split_indx(self, intVal ):
+        return (intVal + 1) // 2
 
+    
+    def _split_layout_grid(self, parent, rows, cols):
+        if rows == 1 :
+            self.fnMakeCols(parent, cols)
+            return
+
+        newParent = self._split_vertical( parent )
+        rowSplits = self._split_indx( rows ) 
+        
+        self._split_layout_grid( newParent, rowSplits, cols )
+        self._split_layout_grid( newParent, rows - rowSplits, cols )
+        
+    def fnMakeCols(self, parent, cols):
+        if cols == 1:
+            self._add_terminals(parent, range(1) )
+            return
+        new_parent = self._split_horizontal( parent )
+        split_index = self._split_indx( cols )
+        
+        if cols == 2:
+            self._add_terminals(new_parent, range(2))
+        else:
+            self.fnMakeCols( new_parent, split_index )
+            self.fnMakeCols( new_parent, cols - split_index )
+            
     def _split_layout(self, parent, hosts):
         if len(hosts) == 1:
             self._add_terminals(parent, hosts)
             return
 
         new_parent = self._split_horizontal(parent)
+        
         split_index = self._split_index(hosts)
 
         if len(hosts) == 2:
@@ -114,6 +152,7 @@ class TerminatorSplit(object):
         elif len(hosts) == 4:
             left_parent = self._split_vertical(new_parent)
             right_parent = self._split_vertical(new_parent)
+            
             self._add_terminals(left_parent, hosts[:split_index])
             self._add_terminals(right_parent, hosts[split_index:])
         else:
